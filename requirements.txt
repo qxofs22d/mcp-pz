@@ -1,0 +1,22 @@
+# MCP SDK
+mcp
+
+# PDF обработка
+PyMuPDF
+pdfplumber
+
+# Векторные эмбеддинги и поиск
+sentence-transformers
+numpy
+
+# Вычисление формул
+asteval
+
+# HTTP-клиент для LLM Gateway
+aiohttp>=3.9.0
+
+# Конфигурация
+python-dotenv
+
+# Тестирование (dev)
+pytest

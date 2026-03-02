@@ -1,0 +1,4 @@
+# Зависимости модуля Vector Storage
+mcp
+numpy
+sentence-transformers

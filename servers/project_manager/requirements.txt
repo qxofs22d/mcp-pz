@@ -1,0 +1,2 @@
+# Зависимости модуля Project Manager
+mcp

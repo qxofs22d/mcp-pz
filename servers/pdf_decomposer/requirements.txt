@@ -1,0 +1,4 @@
+# Зависимости модуля PDF Decomposer
+mcp
+PyMuPDF
+pdfplumber

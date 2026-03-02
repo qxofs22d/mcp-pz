@@ -1,0 +1,3 @@
+# Зависимости модуля Data Core
+mcp
+asteval

@@ -1,0 +1,208 @@
+{
+  "main": {
+    "id": "758eeb4ff3d85c77",
+    "type": "split",
+    "children": [
+      {
+        "id": "a4a6aeb22932e185",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "c78a2f6cb1003723",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "PLATFORM_LOGIC.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "PLATFORM_LOGIC"
+            }
+          },
+          {
+            "id": "f5f95ad0f68b5ce3",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Untitled.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Untitled"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "b78ad7830ad70d14",
+    "type": "split",
+    "children": [
+      {
+        "id": "f28a7556fb4ee817",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "1bdfccdc7a9538c2",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "573b0a18e59bdf1e",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "378d714a86cc0813",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "4a046591eb349832",
+    "type": "split",
+    "children": [
+      {
+        "id": "cf2690e7f9985817",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "ca1e8b577ac114bf",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "PLATFORM_LOGIC.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for PLATFORM_LOGIC"
+            }
+          },
+          {
+            "id": "1c80c8430ce228db",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "PLATFORM_LOGIC.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from PLATFORM_LOGIC"
+            }
+          },
+          {
+            "id": "65bc7c7b5e05e328",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "e51cae6182dc77fe",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "d5d33e501a02f305",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "PLATFORM_LOGIC.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of PLATFORM_LOGIC"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "c78a2f6cb1003723",
+  "lastOpenFiles": [
+    "CLINE_INTERFACE.md",
+    "PLATFORM_LOGIC.md",
+    "Untitled.md",
+    "data/registry.json",
+    "data"
+  ]
+}
