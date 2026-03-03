@@ -26,8 +26,7 @@ d:\dev\mcp-pz\
 │   ├── project_manager/          # управление проектами
 │   ├── pdf_decomposer/           # декомпозиция PDF
 │   ├── vector_storage/           # векторный поиск
-│   ├── data_core/                # хранилище данных
-│   └── llm_gateway/              # доступ к LLM
+│   └── data_core/                # хранилище данных
 ├── data/                         # данные платформы
 │   └── registry.json             # реестр всех проектов
 ├── .clinerules                   # системный промпт для Cline
@@ -154,7 +153,7 @@ d:\Projects\my_foundation\.vscode\mcp.json
 ### 1. Logger (`servers/logger/`)
 - **Назначение:** Логирование всех действий и диалогов
 - **Инструменты:** `log` — запись в `.dialogue/dialogue.jsonl`
-- **Типы записей:** `regular`, `expert`, `system`
+- **Типы записей:** `regular`, `system`
 
 ### 2. Project Manager (`servers/project_manager/`)
 - **Назначение:** Управление проектами ПЗ
@@ -191,14 +190,6 @@ d:\Projects\my_foundation\.vscode\mcp.json
   - `add_formula` / `execute_formula` — работа с формулами
   - `run_script` — запуск скриптов
   - `export_data` / `import_data` — экспорт/импорт данных
-
-### 6. LLM Gateway (`servers/llm_gateway/`)
-- **Назначение:** Доступ к внешним LLM через OpenRouter
-- **Инструменты:**
-  - `ask` — запрос к LLM
-  - `ask_with_context` — запрос с контекстом
-  - `list_models` — список доступных моделей
-  - `set_default_model` — установка модели по умолчанию
 
 ---
 
@@ -254,26 +245,7 @@ d:\Projects\my_foundation\.vscode\mcp.json
 
 ```
 Все значимые действия логируются через logger: log
-Типы: regular (обычный), expert (от LLM), system (системный)
-```
-
----
-
-## Экспертный режим
-
-### Когда использовать
-
-- Пользователь просит "объясни подробно", "почему", "как работает"
-- Пользователь просит "сделай дайджест" или "проанализируй"
-- Пользователь явно просит подключить сильную модель
-
-### Как использовать
-
-```
-1. Собрать контекст из Vector Storage или Logger
-2. Вызвать LLM Gateway: ask_with_context
-3. Вернуть ответ с пометкой [Expert]
-4. Сохранить ответ в лог с типом expert
+Типы: regular (обычный), system (системный)
 ```
 
 ---
