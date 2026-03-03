@@ -15,7 +15,6 @@
 
 ## Системные пути
 
-- **Git:** `C:\Program Files\Git\bin\git.exe`
 - **Python:** виртуальное окружение `D:\dev\.venvs\pdf-analyzer\`
 
 ---
