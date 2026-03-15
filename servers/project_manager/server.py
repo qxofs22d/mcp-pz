@@ -4,22 +4,26 @@ Project Manager MCP Server — управление проектами, файл
 Обеспечивает единую точку управления проектом: создание папок, 
 копирование PDF, сохранение прогресса, доступ к файлам и метаданным.
 
+Интеграция с core:
+- Загрузка и валидация данных через core.loader и core.validator
+- Построение графа зависимостей через core.graph
+- Работа с 15 классами данных ПЗ
+
 Структура проекта:
     project/
-    ├── .pzproject/          # маркер и настройки проекта
-    │   ├── config.json      # конфигурация (модель, шаблон)
-    │   └── skills/          # локальные скиллы (опционально)
     ├── state.json           # рабочее состояние
     ├── pdf/                 # PDF-документы
     ├── data/                # данные расчётов
-    ├── output/              # результаты
-    ├── vector_index/        # индекс векторов
-    └── .dialogue/           # логи диалогов
+    │   └── classes/         # JSON-файлы классов данных
+    ├── output/              # результаты (md-файлы)
+    ├── vector_index/        # векторный индекс
+    └── pdf_cache/           # кэш декомпозиции PDF
 """
 
 import json
 import os
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any, List, Dict
@@ -27,6 +31,22 @@ from typing import Optional, Any, List, Dict
 from mcp.server import Server
 from mcp.types import Tool, TextContent
 import mcp.server.stdio
+
+# Добавляем путь к core для импорта
+_PLATFORM_PATH = Path(__file__).parent.parent.parent
+if str(_PLATFORM_PATH) not in sys.path:
+    sys.path.insert(0, str(_PLATFORM_PATH))
+
+# Импорты core-библиотеки
+try:
+    from core.loader import ProjectData, load_project
+    from core.validator import Validator, validate_project
+    from core.graph import CalculationGraph, CycleType
+    from core.classes import CLASSES_REGISTRY, CLASS_FILE_NAMES
+    CORE_AVAILABLE = True
+except ImportError as e:
+    CORE_AVAILABLE = False
+    _import_error = str(e)
 
 # Создаём экземпляр MCP-сервера
 server = Server("project_manager")
@@ -45,7 +65,6 @@ class ProjectManager:
     Атрибуты:
         path: Путь к папке проекта
         state: Текущее состояние проекта (словарь)
-        config: Конфигурация проекта из .pzproject/config.json
     """
     
     DEFAULT_STATE = {
@@ -58,15 +77,6 @@ class ProjectManager:
         "metadata": {}
     }
     
-    DEFAULT_CONFIG = {
-        "project_name": "",
-        "model": "deepseek/deepseek-r1-0528:free",
-        "template": "default",
-        "description": "",
-        "created_at": None,
-        "updated_at": None
-    }
-    
     def __init__(self, project_path: str):
         """
         Инициализация менеджера проекта.
@@ -75,44 +85,19 @@ class ProjectManager:
             project_path: Путь к папке проекта
         """
         self.path = Path(project_path).resolve()
-        self.config = self._load_config()
         self.state = self._load_state()
-    
-    def _pzproject_dir(self) -> Path:
-        """Возвращает путь к папке .pzproject."""
-        return self.path / ".pzproject"
-    
-    def _config_file(self) -> Path:
-        """Возвращает путь к файлу конфигурации."""
-        return self._pzproject_dir() / "config.json"
     
     def _state_file(self) -> Path:
         """Возвращает путь к файлу состояния."""
         return self.path / "state.json"
     
-    def _dialogue_dir(self) -> Path:
-        """Возвращает путь к папке диалогов."""
-        return self.path / ".dialogue"
-    
     def _vector_index_dir(self) -> Path:
         """Возвращает путь к папке векторного индекса."""
         return self.path / "vector_index"
     
-    def _load_config(self) -> dict:
-        """Загружает конфигурацию из .pzproject/config.json."""
-        config_file = self._config_file()
-        if config_file.exists():
-            with open(config_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return self.DEFAULT_CONFIG.copy()
-    
-    def _save_config(self):
-        """Сохраняет конфигурацию в .pzproject/config.json."""
-        self.config["updated_at"] = datetime.now().isoformat()
-        config_file = self._config_file()
-        config_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(config_file, "w", encoding="utf-8") as f:
-            json.dump(self.config, f, ensure_ascii=False, indent=2)
+    def _pdf_cache_dir(self) -> Path:
+        """Возвращает путь к папке кэша PDF."""
+        return self.path / "pdf_cache"
     
     def _load_state(self) -> dict:
         """
@@ -139,68 +124,53 @@ class ProjectManager:
         Проверяет, является ли папка проектом ПЗ.
         
         Returns:
-            True если есть .pzproject/ или state.json
+            True если есть state.json
         """
-        return self._pzproject_dir().exists() or self._state_file().exists()
+        return self._state_file().exists()
     
-    def init_project(self, description: str = "", model: str = "", template: str = "") -> dict:
+    def init_project(self, description: str = "") -> dict:
         """
         Инициализирует новый проект ПЗ с полной структурой.
         
         Создаёт:
-        - .pzproject/config.json — конфигурация
-        - .pzproject/skills/ — папка для локальных скиллов
         - state.json — рабочее состояние
-        - pdf/, data/, output/ — папки для данных
+        - pdf/ — папка для PDF-документов
+        - data/ — папка для данных расчётов
+        - output/ — папка для результатов (md-файлы)
         - vector_index/ — папка для векторного индекса
-        - .dialogue/ — папка для логов диалогов
+        - pdf_cache/ — папка для кэша PDF
         
         Args:
             description: Описание проекта
-            model: Модель LLM по умолчанию
-            template: Шаблон проекта
         
         Returns:
             Статус операции
         """
         # Создаём структуру папок
-        (self._pzproject_dir() / "skills").mkdir(parents=True, exist_ok=True)
         (self.path / "pdf").mkdir(parents=True, exist_ok=True)
         (self.path / "data").mkdir(parents=True, exist_ok=True)
         (self.path / "output").mkdir(parents=True, exist_ok=True)
         (self._vector_index_dir()).mkdir(parents=True, exist_ok=True)
-        (self._dialogue_dir()).mkdir(parents=True, exist_ok=True)
-        
-        # Инициализируем конфигурацию
-        self.config = self.DEFAULT_CONFIG.copy()
-        self.config["project_name"] = self.path.name
-        self.config["description"] = description
-        if model:
-            self.config["model"] = model
-        if template:
-            self.config["template"] = template
-        self.config["created_at"] = datetime.now().isoformat()
-        self._save_config()
+        (self._pdf_cache_dir()).mkdir(parents=True, exist_ok=True)
         
         # Инициализируем состояние
         self.state = self.DEFAULT_STATE.copy()
         self.state["project_name"] = self.path.name
+        self.state["description"] = description
         self.state["created_at"] = datetime.now().isoformat()
         self._save_state()
         
         return {
             "success": True,
             "message": f"Проект ПЗ инициализирован: {self.path}",
-            "project_name": self.config["project_name"],
-            "config": self.config,
+            "project_name": self.state["project_name"],
             "structure": {
-                ".pzproject/": "конфигурация и скиллы",
                 "state.json": "рабочее состояние",
                 "pdf/": "PDF-документы",
                 "data/": "данные расчётов",
-                "output/": "результаты",
+                "output/": "результаты (md-файлы)",
                 "vector_index/": "векторный индекс",
-                ".dialogue/": "логи диалогов"
+                "pdf_cache/": "кэш декомпозиции PDF"
             }
         }
     
@@ -239,7 +209,7 @@ class ProjectManager:
             return {
                 "success": False,
                 "error": f"Папка проекта не существует: {self.path}",
-                "suggestion": "Создайте новый проект с помощью create_project"
+                "suggestion": "Создайте новый проект с помощью init_project"
             }
         
         if not self._state_file().exists():
@@ -250,12 +220,10 @@ class ProjectManager:
             }
         
         self.state = self._load_state()
-        self.config = self._load_config()
         return {
             "success": True,
             "message": f"Проект загружен: {self.state.get('project_name', self.path.name)}",
-            "state": self.state,
-            "config": self.config if self._pzproject_dir().exists() else None
+            "state": self.state
         }
     
     def detect_project(self) -> dict:
@@ -265,76 +233,24 @@ class ProjectManager:
         Returns:
             Информация о проекте или предложение инициализировать
         """
-        has_pzproject = self._pzproject_dir().exists()
         has_state = self._state_file().exists()
         
-        if has_pzproject:
-            # Полноценный проект ПЗ с конфигурацией
+        if has_state:
             return {
                 "success": True,
                 "is_pzproject": True,
-                "type": "full",
-                "message": "Обнаружен проект ПЗ с конфигурацией",
+                "message": "Обнаружен проект ПЗ",
                 "project_path": str(self.path),
-                "config": self.config,
                 "state": self.state
             }
-        elif has_state:
-            # Старый формат проекта (только state.json)
-            return {
-                "success": True,
-                "is_pzproject": True,
-                "type": "legacy",
-                "message": "Обнаружен проект старого формата (только state.json)",
-                "project_path": str(self.path),
-                "state": self.state,
-                "suggestion": "Рекомендуется выполнить init_project для перехода на новый формат"
-            }
         else:
-            # Не проект ПЗ
             return {
                 "success": True,
                 "is_pzproject": False,
-                "type": None,
                 "message": "Папка не является проектом ПЗ",
                 "project_path": str(self.path),
                 "suggestion": "Используйте init_project для создания нового проекта"
             }
-    
-    def get_config(self) -> dict:
-        """
-        Возвращает конфигурацию проекта.
-        
-        Returns:
-            Конфигурация проекта
-        """
-        return {
-            "success": True,
-            "project_path": str(self.path),
-            "config": self.config
-        }
-    
-    def update_config(self, updates: dict) -> dict:
-        """
-        Обновляет конфигурацию проекта.
-        
-        Args:
-            updates: Словарь с обновлениями
-        
-        Returns:
-            Статус операции
-        """
-        for key, value in updates.items():
-            if key in self.DEFAULT_CONFIG:
-                self.config[key] = value
-        
-        self._save_config()
-        
-        return {
-            "success": True,
-            "message": "Конфигурация обновлена",
-            "config": self.config
-        }
     
     def get_project_info(self) -> dict:
         """
@@ -359,34 +275,22 @@ class ProjectManager:
             "complete": sum(1 for s in sections if s.get("status") == "complete")
         }
         
-        # Проверка наличия системного промпта
-        system_prompt_path = self._pzproject_dir() / "system_prompt.md"
-        system_prompt_exists = system_prompt_path.exists()
-        
         return {
             "success": True,
             "project_path": str(self.path),
             "project_name": self.state.get("project_name", self.path.name),
-            # Ключевые поля из config
-            "model": self.config.get("model"),
-            "template": self.config.get("template"),
-            "description": self.config.get("description"),
+            "description": self.state.get("description", ""),
             # Данные из state
             "pdfs": pdfs,
             "sections": sections,
             "metadata": self.state.get("metadata", {}),
-            # Системный промпт
-            "system_prompt_exists": system_prompt_exists,
-            "system_prompt_path": str(system_prompt_path) if system_prompt_exists else None,
-            # Полная конфигурация
-            "config": self.config,
+            # Пути
             "paths": {
                 "pdf": str(self.path / "pdf"),
                 "data": str(self.path / "data"),
                 "output": str(self.path / "output"),
                 "vector_index": str(self._vector_index_dir()),
-                "dialogue": str(self._dialogue_dir()),
-                "config": str(self._config_file()),
+                "pdf_cache": str(self._pdf_cache_dir()),
                 "state": str(self._state_file())
             },
             "stats": {
@@ -544,6 +448,359 @@ class ProjectManager:
             "message": f"Раздел '{section_title}' сохранён",
             "output_file": f"output/{filename}"
         }
+    
+    # ========================================================================
+    # Методы для работы с core-библиотекой (15 классов данных ПЗ)
+    # ========================================================================
+    
+    def load_data_classes(self) -> dict:
+        """
+        Загружает все классы данных ПЗ через core.loader.
+        
+        Returns:
+            Статус загрузки с количеством объектов по классам
+        """
+        if not CORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": f"Core-библиотека недоступна: {_import_error}"
+            }
+        
+        try:
+            project_data = load_project(self.path)
+            stats = project_data.stats()
+            
+            return {
+                "success": True,
+                "message": f"Загружено {sum(stats.values())} объектов из {self.path}",
+                "stats": stats,
+                "classes_available": list(CLASSES_REGISTRY.keys())
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Ошибка загрузки данных: {str(e)}"
+            }
+    
+    def validate_data(self, fix: bool = False) -> dict:
+        """
+        Валидирует данные проекта через core.validator.
+        
+        Args:
+            fix: Исправлять ли автоматически missing class_name
+        
+        Returns:
+            Результаты валидации
+        """
+        if not CORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": f"Core-библиотека недоступна: {_import_error}"
+            }
+        
+        try:
+            project_data = load_project(self.path)
+            result = validate_project(project_data, fix=fix)
+            
+            # Если были исправления, сохраняем
+            if fix and result.fixed:
+                for class_name in project_data._objects:
+                    project_data.save_class(class_name)
+            
+            return {
+                "success": True,
+                "valid": result.valid,
+                "errors_count": len(result.errors),
+                "warnings_count": len(result.warnings),
+                "fixed_count": len(result.fixed),
+                "errors": result.errors[:20],
+                "warnings": result.warnings[:20],
+                "fixed": result.fixed[:20]
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Ошибка валидации: {str(e)}"
+            }
+    
+    def get_graph_stats(self) -> dict:
+        """
+        Возвращает статистику графа зависимостей.
+        
+        Returns:
+            Статистика графа: узлы, связи, циклы
+        """
+        if not CORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": f"Core-библиотека недоступна: {_import_error}"
+            }
+        
+        try:
+            project_data = load_project(self.path)
+            graph = CalculationGraph(project_data)
+            graph.build()
+            
+            stats = graph.stats()
+            cycles = graph.find_cycles()
+            
+            return {
+                "success": True,
+                "total_nodes": stats.total_nodes,
+                "total_edges": stats.total_edges,
+                "cycles_count": stats.cycles_count,
+                "unlinked_nodes": stats.unlinked_nodes,
+                "nodes_by_type": {k.value: v for k, v in stats.nodes_by_type.items()},
+                "cycles": [
+                    {
+                        "path": c.path,
+                        "type": c.cycle_type.value,
+                        "description": c.description
+                    }
+                    for c in cycles[:10]
+                ]
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Ошибка построения графа: {str(e)}"
+            }
+    
+    def get_impact_analysis(self, obj_id: str) -> dict:
+        """
+        Анализ влияния изменения объекта.
+        
+        Args:
+            obj_id: ID объекта для анализа
+        
+        Returns:
+            Список затронутых объектов
+        """
+        if not CORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": f"Core-библиотека недоступна: {_import_error}"
+            }
+        
+        try:
+            project_data = load_project(self.path)
+            graph = CalculationGraph(project_data)
+            graph.build()
+            
+            result = graph.impact_analysis(obj_id)
+            
+            if result is None:
+                return {
+                    "success": False,
+                    "error": f"Объект не найден: {obj_id}"
+                }
+            
+            return {
+                "success": True,
+                "source_id": obj_id,
+                "affected_count": len(result.affected_ids),
+                "direct_deps_count": len(result.direct_deps),
+                "affected_ids": result.affected_ids[:50],
+                "direct_deps": result.direct_deps[:20]
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Ошибка анализа влияния: {str(e)}"
+            }
+    
+    def list_data_objects(self, class_name: Optional[str] = None) -> dict:
+        """
+        Возвращает список объектов данных.
+        
+        Args:
+            class_name: Имя класса для фильтрации (опционально)
+        
+        Returns:
+            Список объектов с ID и именами
+        """
+        if not CORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": f"Core-библиотека недоступна: {_import_error}"
+            }
+        
+        try:
+            project_data = load_project(self.path)
+            
+            if class_name:
+                if class_name not in CLASSES_REGISTRY:
+                    return {
+                        "success": False,
+                        "error": f"Неизвестный класс: {class_name}",
+                        "available_classes": list(CLASSES_REGISTRY.keys())
+                    }
+                
+                objects = project_data.get_all(class_name)
+                items = []
+                for obj_id, obj in objects.items():
+                    name = getattr(obj, 'name', None) or getattr(obj, 'title', None) or getattr(obj, 'designation', None)
+                    items.append({
+                        "id": obj_id,
+                        "name": name,
+                        "class": class_name
+                    })
+                
+                return {
+                    "success": True,
+                    "class_name": class_name,
+                    "count": len(items),
+                    "objects": items
+                }
+            else:
+                # Все классы
+                result = {}
+                total = 0
+                for cn in CLASSES_REGISTRY:
+                    objects = project_data.get_all(cn)
+                    if objects:
+                        result[cn] = list(objects.keys())
+                        total += len(objects)
+                
+                return {
+                    "success": True,
+                    "total_objects": total,
+                    "by_class": result
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Ошибка получения объектов: {str(e)}"
+            }
+    
+    def get_object_details(self, obj_id: str) -> dict:
+        """
+        Возвращает детальную информацию об объекте.
+        
+        Args:
+            obj_id: ID объекта
+        
+        Returns:
+            Полные данные объекта
+        """
+        if not CORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": f"Core-библиотека недоступна: {_import_error}"
+            }
+        
+        try:
+            project_data = load_project(self.path)
+            obj = project_data.get(obj_id)
+            
+            if obj is None:
+                return {
+                    "success": False,
+                    "error": f"Объект не найден: {obj_id}"
+                }
+            
+            class_name = project_data.get_class_name(obj_id)
+            data = obj.model_dump(mode='json')
+            
+            return {
+                "success": True,
+                "id": obj_id,
+                "class_name": class_name,
+                "data": data
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Ошибка получения объекта: {str(e)}"
+            }
+    
+    def get_calculation_order(self) -> dict:
+        """
+        Возвращает топологический порядок вычислений.
+        
+        Returns:
+            Порядок вычислений или информация о циклах
+        """
+        if not CORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": f"Core-библиотека недоступна: {_import_error}"
+            }
+        
+        try:
+            project_data = load_project(self.path)
+            graph = CalculationGraph(project_data)
+            graph.build()
+            
+            order = graph.topological_order()
+            
+            if order is None:
+                return {
+                    "success": True,
+                    "has_logical_cycles": True,
+                    "message": "Невозможно построить порядок из-за логических циклов",
+                    "cycles": [
+                        {
+                            "path": c.path,
+                            "description": c.description
+                        }
+                        for c in graph.cycles
+                        if c.cycle_type == CycleType.LOGICAL
+                    ]
+                }
+            
+            return {
+                "success": True,
+                "has_logical_cycles": False,
+                "order": order,
+                "total_steps": len(order)
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Ошибка построения порядка: {str(e)}"
+            }
+    
+    def export_graph_dot(self, title: Optional[str] = None) -> dict:
+        """
+        Экспортирует граф в формате Graphviz DOT.
+        
+        Args:
+            title: Заголовок графа
+        
+        Returns:
+            DOT-содержимое
+        """
+        if not CORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": f"Core-библиотека недоступна: {_import_error}"
+            }
+        
+        try:
+            project_data = load_project(self.path)
+            graph = CalculationGraph(project_data)
+            graph.build()
+            
+            dot_content = graph.export_dot(title or f"Graph: {self.path.name}")
+            
+            # Сохраняем в output
+            output_path = self.path / "output" / "graph.dot"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(dot_content)
+            
+            return {
+                "success": True,
+                "message": "DOT-файл экспортирован",
+                "output_file": "output/graph.dot",
+                "content": dot_content
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Ошибка экспорта: {str(e)}"
+            }
 
 
 @server.list_tools()
@@ -552,7 +809,7 @@ async def list_tools():
     return [
         Tool(
             name="init_project",
-            description="Инициализирует новый проект ПЗ с полной структурой (.pzproject/, state.json, pdf/, data/, output/, vector_index/, .dialogue/).",
+            description="Инициализирует новый проект ПЗ с полной структурой (state.json, pdf/, data/, output/, vector_index/, pdf_cache/).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -563,14 +820,6 @@ async def list_tools():
                     "description": {
                         "type": "string",
                         "description": "Описание проекта (опционально)"
-                    },
-                    "model": {
-                        "type": "string",
-                        "description": "Модель LLM по умолчанию (опционально)"
-                    },
-                    "template": {
-                        "type": "string",
-                        "description": "Шаблон проекта (опционально)"
                     }
                 },
                 "required": ["path"]
@@ -578,7 +827,7 @@ async def list_tools():
         ),
         Tool(
             name="detect_project",
-            description="Определяет, является ли указанная папка проектом ПЗ. Возвращает тип проекта (full/legacy/none).",
+            description="Определяет, является ли указанная папка проектом ПЗ (наличие state.json).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -591,22 +840,8 @@ async def list_tools():
             }
         ),
         Tool(
-            name="create_project",
-            description="Создаёт новый проект в указанной папке с подкаталогами pdf, data, output и файлом state.json (старый формат).",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Путь к папке проекта"
-                    }
-                },
-                "required": ["path"]
-            }
-        ),
-        Tool(
             name="load_project",
-            description="Загружает существующий проект из указанной папки, восстанавливая состояние из state.json и конфигурацию из .pzproject/.",
+            description="Загружает существующий проект из указанной папки, восстанавливая состояние из state.json.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -620,33 +855,10 @@ async def list_tools():
         ),
         Tool(
             name="get_project_info",
-            description="Возвращает полную информацию о проекте: пути, статистика, конфигурация.",
+            description="Возвращает полную информацию о проекте: пути, статистика, состояние.",
             inputSchema={
                 "type": "object",
                 "properties": {}
-            }
-        ),
-        Tool(
-            name="get_config",
-            description="Возвращает конфигурацию проекта из .pzproject/config.json.",
-            inputSchema={
-                "type": "object",
-                "properties": {}
-            }
-        ),
-        Tool(
-            name="update_config",
-            description="Обновляет конфигурацию проекта (модель, шаблон, описание).",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "updates": {
-                        "type": "object",
-                        "description": "Словарь с обновлениями конфигурации",
-                        "additionalProperties": True
-                    }
-                },
-                "required": ["updates"]
             }
         ),
         Tool(
@@ -711,6 +923,98 @@ async def list_tools():
                 },
                 "required": ["section_title", "text"]
             }
+        ),
+        # Инструменты для работы с core-библиотекой (15 классов данных ПЗ)
+        Tool(
+            name="load_data_classes",
+            description="Загружает все классы данных ПЗ (15 классов) из папки data/classes/. Возвращает статистику по каждому классу.",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
+            name="validate_data",
+            description="Валидирует данные проекта: проверяет ссылки между объектами, заполняет missing class_name. Используйте fix=true для автоматического исправления.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "fix": {
+                        "type": "boolean",
+                        "description": "Автоматически исправлять missing class_name (по умолчанию false)"
+                    }
+                }
+            }
+        ),
+        Tool(
+            name="get_graph_stats",
+            description="Возвращает статистику графа зависимостей: количество узлов, связей, циклов, изолированных узлов.",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
+            name="get_impact_analysis",
+            description="Анализ влияния: находит все объекты, которые зависят от указанного объекта (прямо или косвенно).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "object_id": {
+                        "type": "string",
+                        "description": "ID объекта для анализа влияния"
+                    }
+                },
+                "required": ["object_id"]
+            }
+        ),
+        Tool(
+            name="list_data_objects",
+            description="Возвращает список объектов данных. Можно фильтровать по имени класса.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "class_name": {
+                        "type": "string",
+                        "description": "Имя класса для фильтрации (metadata, input_data, formulas, methods, final_results и т.д.)"
+                    }
+                }
+            }
+        ),
+        Tool(
+            name="get_object_details",
+            description="Возвращает детальную информацию об объекте по его ID.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "object_id": {
+                        "type": "string",
+                        "description": "ID объекта"
+                    }
+                },
+                "required": ["object_id"]
+            }
+        ),
+        Tool(
+            name="get_calculation_order",
+            description="Возвращает топологический порядок вычислений (порядок расчёта объектов).",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
+            name="export_graph_dot",
+            description="Экспортирует граф зависимостей в формат Graphviz DOT для визуализации.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Заголовок графа (опционально)"
+                    }
+                }
+            }
         )
     ]
 
@@ -727,9 +1031,7 @@ async def call_tool(name: str, arguments: dict):
         
         _current_project = ProjectManager(project_path)
         result = _current_project.init_project(
-            description=arguments.get("description", ""),
-            model=arguments.get("model", ""),
-            template=arguments.get("template", "")
+            description=arguments.get("description", "")
         )
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
     
@@ -740,15 +1042,6 @@ async def call_tool(name: str, arguments: dict):
         
         project = ProjectManager(project_path)
         result = project.detect_project()
-        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-    
-    elif name == "create_project":
-        project_path = arguments.get("path")
-        if not project_path:
-            return [TextContent(type="text", text="Ошибка: не указан путь к проекту.")]
-        
-        _current_project = ProjectManager(project_path)
-        result = _current_project.create_project()
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
     
     elif name == "load_project":
@@ -765,21 +1058,6 @@ async def call_tool(name: str, arguments: dict):
             return [TextContent(type="text", text="Ошибка: проект не загружен.")]
         
         result = _current_project.get_project_info()
-        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-    
-    elif name == "get_config":
-        if not _current_project:
-            return [TextContent(type="text", text="Ошибка: проект не загружен.")]
-        
-        result = _current_project.get_config()
-        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-    
-    elif name == "update_config":
-        if not _current_project:
-            return [TextContent(type="text", text="Ошибка: проект не загружен.")]
-        
-        updates = arguments.get("updates", {})
-        result = _current_project.update_config(updates)
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
     
     elif name == "add_pdf":
@@ -826,6 +1104,74 @@ async def call_tool(name: str, arguments: dict):
             return [TextContent(type="text", text="Ошибка: не указаны section_title или text.")]
         
         result = _current_project.save_section_text(section_title, text)
+        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+    
+    # Новые инструменты для работы с core-библиотекой
+    elif name == "load_data_classes":
+        if not _current_project:
+            return [TextContent(type="text", text="Ошибка: проект не загружен.")]
+        
+        result = _current_project.load_data_classes()
+        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+    
+    elif name == "validate_data":
+        if not _current_project:
+            return [TextContent(type="text", text="Ошибка: проект не загружен.")]
+        
+        fix = arguments.get("fix", False)
+        result = _current_project.validate_data(fix=fix)
+        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+    
+    elif name == "get_graph_stats":
+        if not _current_project:
+            return [TextContent(type="text", text="Ошибка: проект не загружен.")]
+        
+        result = _current_project.get_graph_stats()
+        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+    
+    elif name == "get_impact_analysis":
+        if not _current_project:
+            return [TextContent(type="text", text="Ошибка: проект не загружен.")]
+        
+        obj_id = arguments.get("object_id")
+        if not obj_id:
+            return [TextContent(type="text", text="Ошибка: не указан object_id.")]
+        
+        result = _current_project.get_impact_analysis(obj_id)
+        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+    
+    elif name == "list_data_objects":
+        if not _current_project:
+            return [TextContent(type="text", text="Ошибка: проект не загружен.")]
+        
+        class_name = arguments.get("class_name")
+        result = _current_project.list_data_objects(class_name)
+        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+    
+    elif name == "get_object_details":
+        if not _current_project:
+            return [TextContent(type="text", text="Ошибка: проект не загружен.")]
+        
+        obj_id = arguments.get("object_id")
+        if not obj_id:
+            return [TextContent(type="text", text="Ошибка: не указан object_id.")]
+        
+        result = _current_project.get_object_details(obj_id)
+        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+    
+    elif name == "get_calculation_order":
+        if not _current_project:
+            return [TextContent(type="text", text="Ошибка: проект не загружен.")]
+        
+        result = _current_project.get_calculation_order()
+        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+    
+    elif name == "export_graph_dot":
+        if not _current_project:
+            return [TextContent(type="text", text="Ошибка: проект не загружен.")]
+        
+        title = arguments.get("title")
+        result = _current_project.export_graph_dot(title)
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
     
     return [TextContent(type="text", text=f"Неизвестный инструмент: {name}")]
